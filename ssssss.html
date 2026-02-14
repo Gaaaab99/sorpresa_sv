@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Sorpresa Bucarest!</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #101030; /* Blu scuro notte */
+            font-family: 'Press Start 2P', monospace;
+            cursor: default;
+        }
+
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+
+        /* UI Overlay */
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            padding: 30px;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            z-index: 10;
+        }
+
+        .hud-text {
+            color: white;
+            text-shadow: 4px 4px 0 #000;
+            font-size: 20px;
+            line-height: 1.5;
+        }
+
+        #instructions {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            color: white;
+            opacity: 0.8;
+            font-size: 12px;
+            text-shadow: 2px 2px 0 #000;
+            z-index: 10;
+        }
+
+        /* Schermate Menù */
+        .screen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+            color: white;
+            text-align: center;
+        }
+
+        .hidden { display: none !important; }
+
+        h1 { font-size: 30px; color: #e74c3c; text-shadow: 4px 4px #000; margin-bottom: 20px; line-height: 1.5; }
+        h2 { font-size: 20px; color: white; margin-bottom: 40px; }
+        p { font-size: 14px; color: #ccc; margin-bottom: 30px; line-height: 1.6; }
+
+        button {
+            background: #c0392b;
+            border: 4px solid #fff;
+            color: white;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 20px;
+            padding: 20px 40px;
+            cursor: pointer;
+            text-transform: uppercase;
+            box-shadow: 0 10px 0 #58130e;
+            transition: transform 0.1s;
+        }
+        button:active { transform: translateY(4px); box-shadow: 0 6px 0 #58130e; }
+        button:hover { background: #e74c3c; }
+    </style>
+</head>
+<body>
+
+<!-- HUD -->
+<div id="ui-layer">
+    <div class="hud-text">
+        AMORE<br>
+        <span id="score">000000</span>
+    </div>
+    <div class="hud-text" style="text-align: center;">
+        INDIZI<br>
+        TROVALI
+    </div>
+    <div class="hud-text" style="text-align: right;">
+        CUORI<br>
+        <span id="coins">x 00</span>
+    </div>
+</div>
+
+<div id="instructions">
+    CONTROLLI: [←][→] MUOVI &nbsp; [SPAZIO] SALTA &nbsp; [R] RIAVVIA
+</div>
+
+<!-- SCHERMATA INIZIALE -->
+<div id="start-screen" class="screen">
+    <h1>UNA SORPRESA SPECIALE<br>PER TE</h1>
+    <p>Raccogli tutti gli indizi dai blocchi gialli...<br>Dove stiamo andando?</p>
+    <button onclick="startGame()">SCOPRILO</button>
+</div>
+
+<!-- SCHERMATA GAME OVER / VITTORIA -->
+<div id="game-over-screen" class="screen hidden">
+    <h1 id="go-title">GAME OVER</h1>
+    <h2 id="go-score">Punteggio: 0</h2>
+    <h2 id="go-message" style="color: #f1c40f; font-size: 16px; display:none;"></h2>
+    <button onclick="startGame()">Rigioca</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    /* SUPER LOVE BROS - DRACULA EDITION (FIXED PLANE & FLAG) */
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // --- SPRITE GENERATOR ---
+    function createPlaceholderSprite(color, isEnemy) {
+        const c = document.createElement('canvas'); c.width = 32; c.height = 32;
+        const x = c.getContext('2d');
+        x.fillStyle = color; x.fillRect(0,0,32,32);
+        x.strokeStyle = 'rgba(0,0,0,0.5)'; x.strokeRect(0,0,32,32);
+        x.fillStyle = 'white'; 
+        if (isEnemy) {
+            x.fillStyle = 'red';
+            x.fillRect(6, 10, 6, 6); x.fillRect(20, 10, 6, 6);
+            x.fillStyle = 'white';
+            x.fillRect(8, 20, 4, 6); x.fillRect(20, 20, 4, 6);
+        }
+        return c.toDataURL();
+    }
+
+    const marioImg = new Image();
+    const goombaImg = new Image();
+    if (!goombaImg.src) goombaImg.src = createPlaceholderSprite('#2c3e50', true);
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // --- CONFIG ---
+    const TILE_SIZE = 50; 
+    const GRAVITY = 0.5;    
+    const FRICTION = 0.85;  
+    const ACCEL = 0.8;      
+    const JUMP_FORCE = 16;  
+    const MAX_SPEED = 7.5;  
+    
+    // --- FPS CONTROL ---
+    let lastTime = 0;
+    const FPS = 60;
+    const interval = 1000 / FPS;
+
+    // --- STATE ---
+    let gameState = {
+        state: 'menu',
+        score: 0, coins: 0, cameraX: 0, frame: 0,
+        plane: { x: -300, y: 0, active: false, hasPlayer: false }
+    };
+    
+    // Generazione Stelle
+    let stars = [];
+    for(let i=0; i<150; i++) {
+        stars.push({
+            x: Math.random() * 2000, 
+            y: Math.random() * 1000,
+            size: Math.random() * 2 + 1,
+            blink: Math.random() * 100
+        });
+    }
+
+    const keys = { right: false, left: false, up: false };
+
+    window.addEventListener('keydown', e => {
+        if(gameState.state === 'cutscene' || gameState.state === 'gameover') return;
+        if(gameState.state === 'menu' && e.code === 'Enter') startGame();
+        if(gameState.state === 'playing') {
+            if(e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = true;
+            if(e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = true;
+            if(e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') keys.up = true;
+            if(e.code === 'KeyR') startGame();
+        }
+    });
+
+    window.addEventListener('keyup', e => {
+        if(e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = false;
+        if(e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = false;
+        if(e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') keys.up = false;
+    });
+
+    function startGame() {
+        document.getElementById('start-screen').classList.add('hidden');
+        document.getElementById('game-over-screen').classList.add('hidden');
+        document.getElementById('go-message').style.display = 'none';
+        createLevel();
+        gameState.state = 'playing';
+        gameState.score = 0;
+        gameState.coins = 0;
+        gameState.cameraX = 0;
+        gameState.plane = { x: -300, y: 0, active: false, hasPlayer: false };
+        updateHUD();
+    }
+
+    function startVictorySequence(playerY) {
+        if (gameState.state === 'cutscene') return;
+        gameState.state = 'cutscene';
+        gameState.plane.active = true;
+        gameState.plane.x = gameState.cameraX - 300;
+        gameState.plane.y = playerY - 40;
+        gameState.plane.hasPlayer = false;
+        keys.right = false; keys.left = false; keys.up = false;
+    }
+
+    function gameWin() {
+        gameState.state = 'gameover';
+        document.getElementById('game-over-screen').classList.remove('hidden');
+        document.getElementById('go-title').innerText = "BUCAREST CI ASPETTA!";
+        document.getElementById('go-title').style.color = "#3498db";
+        document.getElementById('go-score').innerText = "Prenotato per noi!";
+        const msg = document.getElementById('go-message');
+        msg.innerText = "Preparati a incontrare Dracula...";
+        msg.style.display = 'block';
+    }
+
+    function gameOver() {
+        gameState.state = 'gameover';
+        document.getElementById('game-over-screen').classList.remove('hidden');
+        document.getElementById('go-title').innerText = "NON MOLLARE!";
+        document.getElementById('go-title').style.color = "red";
+        document.getElementById('go-score').innerText = "Riprova per scoprire la sorpresa";
+    }
+
+    // --- GRAPHICS ---
+    const Graphics = {
+        drawPlayer: (ctx, x, y, w, h, dir, moving, visible=true, skin) => {
+            if (!visible) return;
+            ctx.save();
+            if (!dir) {
+                ctx.translate(x + w, y);
+                ctx.scale(-1, 1);
+                ctx.translate(-x, -y);
+            }
+            let bounce = (moving && Math.floor(Date.now() / 150) % 2 === 0) ? -2 : 0; 
+            y += bounce;
+
+            if (marioImg.complete && marioImg.naturalHeight !== 0) {
+                ctx.drawImage(marioImg, x, y, w, h);
+                drawAccessories(ctx, x, y, skin);
+            } else {
+                drawBoyfriendBase(ctx, x, y, skin);
+            }
+            ctx.restore();
+        },
+        drawCollectible: (ctx, x, y, type) => {
+            ctx.save();
+            ctx.translate(x + 15, y + 15);
+            ctx.translate(0, Math.sin(Date.now()/300)*3);
+
+            if (type === 'dracula_cape') {
+                ctx.fillStyle = '#000'; ctx.beginPath(); ctx.moveTo(0,-15); ctx.lineTo(-15, 15); ctx.lineTo(15, 15); ctx.fill();
+                ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.moveTo(0,-10); ctx.lineTo(-8, 10); ctx.lineTo(8, 10); ctx.fill();
+            } else if (type === 'fangs') {
+                ctx.fillStyle = 'white';
+                ctx.beginPath(); ctx.moveTo(-10, -5); ctx.lineTo(-5, 10); ctx.lineTo(0, -5); ctx.fill(); 
+                ctx.beginPath(); ctx.moveTo(10, -5); ctx.lineTo(5, 10); ctx.lineTo(0, -5); ctx.fill(); 
+            } else if (type === 'blood') {
+                ctx.fillStyle = '#f1c40f'; ctx.fillRect(-8, 5, 16, 2); ctx.fillRect(-2, 5, 4, 10); ctx.fillRect(-8, 15, 16, 2);
+                ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI, false); ctx.fill();
+                ctx.fillStyle = '#e74c3c'; ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI, false); ctx.fill();
+            }
+            ctx.restore();
+        },
+        drawPlane: (ctx, x, y) => {
+            ctx.save();
+            
+            // 1. Fusoliera (Body)
+            ctx.fillStyle = '#ecf0f1'; // Bianco
+            ctx.strokeStyle = '#7f8c8d';
+            ctx.lineWidth = 2;
+            
+            ctx.beginPath();
+            ctx.moveTo(x + 190, y + 40); // Muso
+            ctx.quadraticCurveTo(x + 100, y + 60, x + 40, y + 50); // Pancia
+            ctx.lineTo(x + 20, y + 50); // Base coda
+            ctx.lineTo(x + 10, y + 10); // Punta alta retro coda
+            ctx.lineTo(x + 60, y + 10); // Punta alta avanti coda
+            ctx.lineTo(x + 50, y + 30); // Base avanti coda
+            ctx.lineTo(x + 130, y + 30); // Schiena
+            ctx.lineTo(x + 140, y + 20); // Cabina retro
+            ctx.lineTo(x + 170, y + 20); // Cabina avanti
+            ctx.lineTo(x + 190, y + 40); // Muso
+            ctx.fill();
+            ctx.stroke();
+
+            // 2. Bandiera Romania sulla Coda (Blu, Giallo, Rosso) - FIXED
+            ctx.save();
+            ctx.beginPath();
+            // Ritraccio l'area della coda per disegnare la bandiera
+            ctx.moveTo(x + 20, y + 50);
+            ctx.lineTo(x + 10, y + 10);
+            ctx.lineTo(x + 60, y + 10);
+            ctx.lineTo(x + 50, y + 30);
+            ctx.lineTo(x + 45, y + 50); 
+            ctx.closePath();
+            ctx.clip(); // Taglia tutto ciò che esce da questa forma
+
+            // Strisce Verticali (Colori corretti e larghi per coprire l'area)
+            ctx.fillStyle = '#002B7F'; ctx.fillRect(x, y, 28, 60); // Blu
+            ctx.fillStyle = '#FCD116'; ctx.fillRect(x + 28, y, 16, 60); // Giallo
+            ctx.fillStyle = '#CE1126'; ctx.fillRect(x + 44, y, 30, 60); // Rosso
+            ctx.restore();
+
+            // 3. Ala (Wing)
+            ctx.fillStyle = '#bdc3c7';
+            ctx.beginPath();
+            ctx.moveTo(x + 80, y + 35);
+            ctx.lineTo(x + 60, y + 70); 
+            ctx.lineTo(x + 130, y + 70); 
+            ctx.lineTo(x + 140, y + 35); 
+            ctx.fill();
+            ctx.stroke();
+
+            // 4. LA RAGAZZA (Sull'aereo - Grande e Visibile)
+            // Viso
+            ctx.fillStyle = '#ffcc99'; 
+            ctx.fillRect(x + 145, y - 5, 20, 20);
+            // Capelli lunghi (Castani)
+            ctx.fillStyle = '#3e2723'; 
+            ctx.fillRect(x + 142, y - 8, 26, 6); // Sopra
+            ctx.fillRect(x + 142, y - 8, 6, 35); // Lato sx lungo
+            ctx.fillRect(x + 162, y - 8, 6, 35); // Lato dx lungo
+            // Occhi (Grandi)
+            ctx.fillStyle = 'black'; 
+            ctx.fillRect(x + 149, y + 2, 4, 4);
+            ctx.fillRect(x + 157, y + 2, 4, 4);
+            // Sorriso
+            ctx.fillStyle = '#e57373';
+            ctx.fillRect(x + 151, y + 10, 8, 2);
+
+            // 5. Cabina (Vetro Semitrasparente - Sopra la ragazza)
+            ctx.fillStyle = 'rgba(129, 212, 250, 0.4)'; 
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x + 140, y + 30);
+            ctx.lineTo(x + 145, y + 22);
+            ctx.lineTo(x + 168, y + 22);
+            ctx.lineTo(x + 180, y + 35);
+            ctx.fill();
+            ctx.stroke();
+
+            // 6. Elica
+            ctx.fillStyle = '#2c3e50'; 
+            ctx.fillRect(x + 190, y + 35, 6, 12);
+            ctx.fillStyle = '#bdc3c7'; 
+            if (gameState.frame % 4 < 2) ctx.fillRect(x + 196, y + 5, 4, 70);
+            else ctx.fillRect(x + 194, y + 38, 15, 6);
+
+            ctx.restore();
+        }
+    };
+
+    function drawBoyfriendBase(ctx, x, y, skin) {
+        const skinColor = '#ffcc99'; const shirtColor = '#3498db'; const pantsColor = '#2c3e50';
+        ctx.fillStyle = skinColor; ctx.fillRect(x+10, y+4, 24, 24);
+        ctx.fillStyle = '#3e2723'; ctx.fillRect(x+8, y, 28, 8); ctx.fillRect(x+8, y, 8, 20); ctx.fillRect(x+32, y, 4, 16);
+        ctx.fillStyle = 'black'; ctx.fillRect(x+22, y+12, 4, 4);
+        ctx.fillStyle = shirtColor; ctx.fillRect(x+12, y+28, 20, 16); 
+        ctx.fillStyle = skinColor; ctx.fillRect(x+8, y+28, 4, 12); ctx.fillRect(x+32, y+28, 4, 12);
+        ctx.fillStyle = pantsColor; ctx.fillRect(x+12, y+44, 8, 8); ctx.fillRect(x+24, y+44, 8, 8);
+        drawAccessories(ctx, x, y, skin);
+    }
+
+    function drawAccessories(ctx, x, y, skin) {
+        if (skin.cape) {
+            ctx.fillStyle = '#000'; ctx.beginPath(); ctx.moveTo(x + 10, y + 30); ctx.lineTo(x - 5, y + 50); ctx.lineTo(x + 45, y + 50); ctx.lineTo(x + 34, y + 30); ctx.fill();
+            ctx.fillStyle = '#c0392b'; ctx.fillRect(x+8, y+24, 4, 8); ctx.fillRect(x+32, y+24, 4, 8);
+        }
+        if (skin.fangs) { ctx.fillStyle = 'white'; ctx.fillRect(x+20, y+22, 2, 4); ctx.fillRect(x+26, y+22, 2, 4); }
+        if (skin.blood) {
+            ctx.strokeStyle = 'rgba(231, 76, 60, 0.5)'; ctx.lineWidth = 2; ctx.strokeRect(x-2, y-2, 48, 54);
+            ctx.fillStyle = 'gold'; ctx.fillRect(x+34, y+35, 4, 6);
+            ctx.fillStyle = 'red'; ctx.fillRect(x+34, y+35, 4, 2);
+        }
+    }
+    
+    Graphics.drawBlock = (ctx, x, y, type) => {
+        if (type === 'ground') { ctx.fillStyle = '#27ae60'; ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE); ctx.fillStyle = '#2ecc71'; ctx.fillRect(x, y, TILE_SIZE, 8); } 
+        else if (type === 'brick') { ctx.fillStyle = '#7f8c8d'; ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE); ctx.strokeStyle = '#2c3e50'; ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE); } 
+        else if (type === 'mystery') { ctx.fillStyle = '#f1c40f'; ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE); ctx.strokeStyle = '#f39c12'; ctx.lineWidth = 4; ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE); ctx.fillStyle = 'black'; ctx.font = 'bold 30px monospace'; ctx.fillText('?', x + 15, y + 35); } 
+        else if (type === 'used') { ctx.fillStyle = '#95a5a6'; ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE); ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE); }
+    };
+    Graphics.drawGoomba = (ctx, x, y) => {
+        try { ctx.drawImage(goombaImg, x, y, TILE_SIZE, TILE_SIZE); } 
+        catch(e) { ctx.fillStyle = 'brown'; ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE); }
+    };
+
+
+    // --- ENTITIES ---
+    class Collectible {
+        constructor(x, y, type) { this.x = x; this.y = y; this.w = 30; this.h = 30; this.type = type; this.vy = -8; this.collected = false; }
+        update(map, player) {
+            if (this.collected) return;
+            this.vy += GRAVITY; this.y += this.vy;
+            for(let b of map) {
+                 if (this.x < b.x + b.w && this.x + this.w > b.x && this.y < b.y + b.h && this.y + this.h > b.y) {
+                    if (this.vy > 0) { this.y = b.y - this.h; this.vy = 0; }
+                }
+            }
+            if (this.x < player.x + player.w && this.x + this.w > player.x && this.y < player.y + player.h && this.y + this.h > player.y) this.collect(player);
+        }
+        collect(player) {
+            this.collected = true;
+            let msg = "";
+            if (this.type === 'dracula_cape') { player.skin.cape = true; msg = "VESTITO DA DRACULA!"; }
+            if (this.type === 'fangs') { player.skin.fangs = true; msg = "DENTI VAMPIRICI!"; }
+            if (this.type === 'blood') { player.skin.blood = true; msg = "SANGUE DI VAMPIRO!"; }
+            floatingTexts.push(new FloatingText(this.x, this.y - 20, msg));
+            addScore(1000);
+        }
+        draw() { if (!this.collected) Graphics.drawCollectible(ctx, this.x, this.y, this.type); }
+    }
+
+    class FloatingText {
+        constructor(x, y, text) { this.x = x; this.y = y; this.text = text; this.life = 90; }
+        update() { this.y -= 0.5; this.life--; }
+        draw() {
+            if (this.life <= 0) return;
+            ctx.fillStyle = `rgba(255, 255, 255, ${this.life/90})`;
+            ctx.font = '14px "Press Start 2P"';
+            ctx.fillText(this.text, this.x, this.y);
+        }
+    }
+
+    class Player {
+        constructor() {
+            this.x = 100; this.y = 100; this.w = 44; this.h = 50;
+            this.vx = 0; this.vy = 0;
+            this.grounded = false; this.facingRight = true;
+            this.visible = true;
+            this.skin = { cape: false, fangs: false, blood: false };
+        }
+        update(map) {
+            if (gameState.state === 'cutscene') { this.vx = 0; this.vy = 0; return; }
+            if (keys.right) { if (this.vx < MAX_SPEED) this.vx += ACCEL; this.facingRight = true; } 
+            else if (keys.left) { if (this.vx > -MAX_SPEED) this.vx -= ACCEL; this.facingRight = false; } 
+            else { this.vx *= FRICTION; }
+
+            this.x += this.vx; this.checkCollision(map, 'x');
+            if (keys.up && this.grounded) { this.vy = -JUMP_FORCE; this.grounded = false; }
+            this.vy += GRAVITY; this.y += this.vy;
+            this.grounded = false; this.checkCollision(map, 'y');
+
+            if (this.x > 143 * TILE_SIZE && this.grounded && !gameState.plane.active) startVictorySequence(this.y);
+            if (this.y > canvas.height + 200) gameOver();
+        }
+        checkCollision(map, axis) {
+            const margin = 100;
+            for (let b of map) {
+                if (Math.abs(b.x - this.x) > margin) continue;
+                if (this.x < b.x + b.w && this.x + this.w > b.x && this.y < b.y + b.h && this.y + this.h > b.y) {
+                    if (axis === 'x') {
+                        if (this.vx > 0) this.x = b.x - this.w; else this.x = b.x + b.w;
+                        this.vx = 0;
+                    } else {
+                        if (this.vy > 0) { this.y = b.y - this.h; this.grounded = true; this.vy = 0; }
+                        else if (this.vy < 0) {
+                            this.y = b.y + b.h; this.vy = 0;
+                            if (b.type === 'mystery') {
+                                b.type = 'used';
+                                if (b.content) collectibles.push(new Collectible(b.x + 10, b.y - 30, b.content));
+                                else { addCoin(); createParticle(b.x + 25, b.y, '#f1c40f'); }
+                            } else if (b.type === 'brick') {
+                                createParticle(b.x + 25, b.y + 25, '#7f8c8d');
+                                b.y -= 5; setTimeout(()=>b.y+=5, 100);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        draw() {
+            if (gameState.state === 'gameover' && this.y > canvas.height) return; 
+            Graphics.drawPlayer(ctx, this.x, this.y, this.w, this.h, this.facingRight, Math.abs(this.vx) > 0.5, this.visible, this.skin);
+        }
+    }
+
+    class Goomba {
+        constructor(x, y) { 
+            this.x = x; this.y = y; this.w = TILE_SIZE; this.h = TILE_SIZE; 
+            this.vx = -1.0; this.vy = 0; this.dead = false; this.grounded = false; // Rallentato nemico a 1.0
+        }
+        update(map, player) {
+            if (this.dead) return;
+            if (this.x > gameState.cameraX + canvas.width + 100 || this.x < gameState.cameraX - 100) return;
+
+            // 1. Applica Gravità
+            this.vy += GRAVITY;
+
+            // 2. Controllo spigoli/precipizi (Smart AI)
+            if (this.grounded) {
+                let lookAheadX = this.x + (this.vx > 0 ? this.w + 5 : -5);
+                let hasGround = false;
+                for (let b of map) {
+                    if (Math.abs(b.x - this.x) > 100) continue;
+                    if (lookAheadX > b.x && lookAheadX < b.x + b.w &&
+                        this.y + this.h + 2 > b.y && this.y + this.h - 5 < b.y + b.h) {
+                        hasGround = true; break;
+                    }
+                }
+                if (!hasGround) this.vx *= -1;
+            }
+
+            // 3. Movimento X
+            this.x += this.vx;
+            for (let b of map) {
+                if (Math.abs(b.x - this.x) > 100) continue;
+                if (this.check(b)) { if (this.vx > 0) this.x = b.x - this.w; else this.x = b.x + b.w; this.vx *= -1; }
+            }
+
+            // 4. Movimento Y
+            this.y += this.vy;
+            this.grounded = false;
+            for (let b of map) {
+                if (Math.abs(b.x - this.x) > 100) continue;
+                if (this.check(b)) { 
+                    if (this.vy > 0) { this.y = b.y - this.h; this.vy = 0; this.grounded = true; } 
+                }
+            }
+
+            if (this.checkHit(player)) {
+                if (player.vy > 0 && player.y + player.h < this.y + 30) {
+                    this.dead = true; player.vy = -10; addScore(100); createParticle(this.x, this.y, '#2c3e50');
+                } else if (gameState.state === 'playing') gameOver();
+            }
+        }
+        check(b) { return (this.x < b.x + b.w && this.x + this.w > b.x && this.y < b.y + b.h && this.y + this.h > b.y); }
+        checkHit(p) { return (this.x < p.x + p.w && this.x + p.w > p.x && this.y < p.y + p.h && this.y + p.h > p.y); }
+        draw() { if (!this.dead) Graphics.drawGoomba(ctx, this.x, this.y); }
+    }
+
+    // --- LEVEL ---
+    let map = [], enemies = [], particles = [], collectibles = [], floatingTexts = [], player = new Player();
+
+    function createLevel() {
+        map = []; enemies = []; particles = []; collectibles = []; floatingTexts = []; player = new Player();
+        let gy = canvas.height - 100;
+        function floor(start, len) { for(let i=0; i<len; i++) { map.push({x: (start+i)*TILE_SIZE, y: gy, w: TILE_SIZE, h: TILE_SIZE, type: 'ground'}); map.push({x: (start+i)*TILE_SIZE, y: gy+TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE, type: 'ground'}); } }
+        function rect(x, y, w, h, t='brick', content=null) { for(let i=0; i<w; i++) for(let j=0; j<h; j++) map.push({x: (x+i)*TILE_SIZE, y: gy-(y+j)*TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE, type: t, content: content}); }
+        function bat(x) { enemies.push(new Goomba(x*TILE_SIZE, gy-TILE_SIZE)); }
+        function floatBat(x, y) { enemies.push(new Goomba(x*TILE_SIZE, gy-(y)*TILE_SIZE)); }
+
+        // --- LEVEL START ---
+        floor(0, 60);
+
+        // INDIZIO 1: MANTELLO
+        rect(10, 4, 1, 1, 'mystery', 'dracula_cape');
+        rect(15, 3, 3, 1, 'brick');
+        rect(25, 2, 1, 2, 'brick'); bat(27);
+
+        // INDIZIO 2: DENTI
+        rect(30, 4, 1, 1, 'mystery', 'fangs');
+        rect(35, 4, 5, 1, 'brick'); floatBat(37, 5);
+
+        // CASTELLO
+        rect(50, 1, 1, 4, 'brick'); rect(55, 1, 1, 4, 'brick'); rect(51, 4, 4, 1, 'brick');
+        bat(48); bat(57); 
+
+        // --- GAP FIX & BLOOD CLOSER ---
+        floor(64, 11); 
+        rect(64, 5, 1, 1, 'mystery', 'blood'); 
+
+        // Buco 1
+        rect(78, 3, 3, 1, 'brick'); floatBat(79, 4);
+        floor(85, 15);
+        rect(90, 2, 1, 2, 'brick'); rect(92, 4, 1, 1, 'mystery'); bat(95);
+
+        // Buco 2
+        rect(105, 3, 2, 1, 'brick'); rect(110, 5, 2, 1, 'brick'); floatBat(110, 6);
+        floor(118, 50);
+
+        rect(125, 2, 1, 3, 'brick');
+        for(let i=0; i<8; i++) rect(135+i, i+1, 1, i+1, 'brick');
+        rect(143, 8, 8, 8, 'brick');
+        
+        map.push({x: 170*TILE_SIZE, y: -2000, w: 100, h: 4000, type: 'brick'});
+    }
+
+    function addScore(p) { gameState.score += p; updateHUD(); }
+    function addCoin() { gameState.coins++; gameState.score += 200; updateHUD(); }
+    function updateHUD() {
+        document.getElementById('score').innerText = gameState.score.toString().padStart(6, '0');
+        document.getElementById('coins').innerText = 'x ' + gameState.coins.toString().padStart(2, '0');
+    }
+    function createParticle(x, y, c) { for(let i=0; i<6; i++) particles.push({x, y, vx:(Math.random()-.5)*10, vy:(Math.random()-.5)*10, life:30, color:c}); }
+
+    function loop(timestamp) {
+        requestAnimationFrame(loop);
+        
+        if (!lastTime) lastTime = timestamp;
+        const deltaTime = timestamp - lastTime;
+        
+        if (deltaTime >= interval) {
+            lastTime = timestamp - (deltaTime % interval);
+            
+            // SFONDO BLU CON STELLE
+            ctx.fillStyle = '#101030'; ctx.fillRect(0, 0, canvas.width, canvas.height); 
+            
+            // Disegna stelle (con leggero parallasse)
+            ctx.fillStyle = 'white';
+            for(let s of stars) {
+                // Parallasse: si muovono più lentamente della camera
+                let sx = s.x - gameState.cameraX * 0.5;
+                // Se esce dallo schermo lo riportiamo dentro (loop)
+                while(sx < 0) sx += 2000;
+                while(sx > canvas.width) sx -= 2000;
+                
+                // Luccichio
+                if (gameState.frame % 20 > 10 && Math.random() > 0.8) continue;
+                
+                ctx.fillRect(sx, s.y, s.size, s.size);
+            }
+
+            if (gameState.state === 'cutscene') {
+                if (!gameState.plane.hasPlayer) {
+                    gameState.plane.x += 4; // Aereo più lento in cutscene
+                    if (gameState.plane.x > player.x - 50) {
+                        gameState.plane.hasPlayer = true; player.visible = false;
+                    }
+                } else {
+                    gameState.plane.x += 6; gameState.plane.y -= 2; 
+                    gameState.cameraX += 4; 
+                    if (gameState.plane.x > player.x + canvas.width + 100) gameWin();
+                }
+            }
+
+            if (gameState.state === 'playing') {
+                let targetX = player.x - canvas.width * 0.3;
+                if (targetX < 0) targetX = 0;
+                gameState.cameraX += (targetX - gameState.cameraX) * 0.1;
+
+                player.update(map);
+                enemies.forEach(e => e.update(map, player));
+                collectibles.forEach(c => c.update(map, player));
+                floatingTexts.forEach(t => t.update());
+            }
+
+            ctx.save();
+            ctx.translate(-Math.floor(gameState.cameraX), 0);
+
+            // LUNA ROSSA
+            ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(gameState.cameraX + 800, 100, 40, 0, Math.PI*2); ctx.fill();
+
+            for (let b of map) { if (b.x + b.w > gameState.cameraX && b.x < gameState.cameraX + canvas.width) Graphics.drawBlock(ctx, b.x, b.y, b.type); }
+
+            enemies.forEach(e => e.draw());
+            collectibles.forEach(c => c.draw());
+            player.draw();
+            
+            if (gameState.plane.active) Graphics.drawPlane(ctx, gameState.plane.x, gameState.plane.y);
+
+            for(let i=particles.length-1; i>=0; i--) {
+                let p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += GRAVITY; p.life--;
+                ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 5, 5);
+                if(p.life <= 0) particles.splice(i, 1);
+            }
+            floatingTexts.forEach(t => t.draw());
+
+            ctx.restore();
+            gameState.frame++;
+        }
+    }
+    
+    // Inizia loop con timestamp
+    requestAnimationFrame(loop);
+</script>
+</body>
+</html>
