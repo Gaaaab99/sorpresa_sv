@@ -12,6 +12,7 @@
             background-color: #101030; /* Blu scuro notte */
             font-family: 'Press Start 2P', monospace;
             cursor: default;
+            user-select: none;
         }
 
         canvas {
@@ -48,6 +49,14 @@
             text-shadow: 2px 2px 0 #000;
             z-index: 10;
         }
+        
+        #audio-hint {
+            position: absolute;
+            top: 10px; right: 10px;
+            color: rgba(255,255,255,0.5);
+            font-size: 10px;
+            z-index: 15;
+        }
 
         /* Schermate Menù */
         .screen {
@@ -83,9 +92,18 @@
         }
         button:active { transform: translateY(4px); box-shadow: 0 6px 0 #58130e; }
         button:hover { background: #e74c3c; }
+        
+        /* Loading text fallback */
+        #loading { position: absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:white; }
     </style>
 </head>
 <body>
+
+<!-- AUDIO PLAYER -->
+<!-- Metti il file 'music.mp3' nella cartella del gioco! -->
+<audio id="bgm" loop>
+    <source src="music.mp3" type="audio/mpeg">
+</audio>
 
 <!-- HUD -->
 <div id="ui-layer">
@@ -101,6 +119,7 @@
         CUORI<br>
         <span id="coins">x 00</span>
     </div>
+    <div id="audio-hint">🔊 PREMI 'M' PER MUTARE</div>
 </div>
 
 <div id="instructions">
@@ -118,19 +137,21 @@
 <div id="game-over-screen" class="screen hidden">
     <h1 id="go-title">GAME OVER</h1>
     <h2 id="go-score">Punteggio: 0</h2>
-    <h2 id="go-message" style="color: #f1c40f; font-size: 16px; display:none;"></h2>
+    <h2 id="go-message" style="color: #f1c40f; font-size: 16px; display:none; margin-top: 20px; line-height: 2;"></h2>
     <button onclick="startGame()">Rigioca</button>
 </div>
 
 <canvas id="gameCanvas"></canvas>
 
 <script>
-    /* SUPER LOVE BROS - DRACULA EDITION (FIXED PLANE & FLAG) */
+    /* SUPER LOVE BROS - FINAL BUILD WITH MUSIC 
+       Include: Audio Logic, Fix aereo, bandiera, ragazza, velocità, FPS limit.
+    */
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    // --- SPRITE GENERATOR ---
+    // --- SPRITE GENERATOR (Fallback) ---
     function createPlaceholderSprite(color, isEnemy) {
         const c = document.createElement('canvas'); c.width = 32; c.height = 32;
         const x = c.getContext('2d');
@@ -146,8 +167,13 @@
         return c.toDataURL();
     }
 
+    // IMMAGINI - Se hai i file PNG, il browser li userà. 
+    // Altrimenti usa il generatore automatico (quadrato blu/marrone).
     const marioImg = new Image();
+    // marioImg.src = 'il_mio_ragazzo.png';  <-- SCOMMENTA SE HAI IL FILE
+    
     const goombaImg = new Image();
+    // goombaImg.src = 'nemico.png';         <-- SCOMMENTA SE HAI IL FILE
     if (!goombaImg.src) goombaImg.src = createPlaceholderSprite('#2c3e50', true);
 
     function resize() {
@@ -157,15 +183,15 @@
     window.addEventListener('resize', resize);
     resize();
 
-    // --- CONFIG ---
+    // --- CONFIGURAZIONE BILANCIATA ---
     const TILE_SIZE = 50; 
     const GRAVITY = 0.5;    
     const FRICTION = 0.85;  
-    const ACCEL = 0.8;      
-    const JUMP_FORCE = 16;  
-    const MAX_SPEED = 7.5;  
+    const ACCEL = 0.7;      
+    const JUMP_FORCE = 15;  
+    const MAX_SPEED = 6.5;  
     
-    // --- FPS CONTROL ---
+    // --- FPS CONTROL (IMPORTANTE PER SCHERMI VELOCI) ---
     let lastTime = 0;
     const FPS = 60;
     const interval = 1000 / FPS;
@@ -177,7 +203,7 @@
         plane: { x: -300, y: 0, active: false, hasPlayer: false }
     };
     
-    // Generazione Stelle
+    // Stelle Sfondo
     let stars = [];
     for(let i=0; i<150; i++) {
         stars.push({
@@ -189,10 +215,20 @@
     }
 
     const keys = { right: false, left: false, up: false };
+    let isMuted = false;
 
     window.addEventListener('keydown', e => {
         if(gameState.state === 'cutscene' || gameState.state === 'gameover') return;
         if(gameState.state === 'menu' && e.code === 'Enter') startGame();
+        
+        // Mute Toggle
+        if (e.code === 'KeyM') {
+            const music = document.getElementById('bgm');
+            isMuted = !isMuted;
+            music.muted = isMuted;
+            document.getElementById('audio-hint').innerText = isMuted ? "🔇 MUTO" : "🔊 PREMI 'M' PER MUTARE";
+        }
+
         if(gameState.state === 'playing') {
             if(e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = true;
             if(e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = true;
@@ -211,6 +247,12 @@
         document.getElementById('start-screen').classList.add('hidden');
         document.getElementById('game-over-screen').classList.add('hidden');
         document.getElementById('go-message').style.display = 'none';
+        
+        // Avvia Musica
+        const music = document.getElementById('bgm');
+        music.volume = 0.3; // Volume basso
+        if(!isMuted) music.play().catch(e => console.log("Audio non trovato o bloccato"));
+
         createLevel();
         gameState.state = 'playing';
         gameState.score = 0;
@@ -237,7 +279,7 @@
         document.getElementById('go-title').style.color = "#3498db";
         document.getElementById('go-score').innerText = "Prenotato per noi!";
         const msg = document.getElementById('go-message');
-        msg.innerText = "Preparati a incontrare Dracula...";
+        msg.innerHTML = "Preparati a incontrare Dracula...<br>✈️🇷🇴❤️";
         msg.style.display = 'block';
     }
 
@@ -262,6 +304,8 @@
             let bounce = (moving && Math.floor(Date.now() / 150) % 2 === 0) ? -2 : 0; 
             y += bounce;
 
+            // Logica: Se l'immagine custom è caricata, usa quella E disegna accessori sopra.
+            // Altrimenti disegna il ragazzo base E accessori sopra.
             if (marioImg.complete && marioImg.naturalHeight !== 0) {
                 ctx.drawImage(marioImg, x, y, w, h);
                 drawAccessories(ctx, x, y, skin);
@@ -311,19 +355,18 @@
             ctx.fill();
             ctx.stroke();
 
-            // 2. Bandiera Romania sulla Coda (Blu, Giallo, Rosso) - FIXED
+            // 2. Bandiera Romania sulla Coda - FIXED
             ctx.save();
             ctx.beginPath();
-            // Ritraccio l'area della coda per disegnare la bandiera
             ctx.moveTo(x + 20, y + 50);
             ctx.lineTo(x + 10, y + 10);
             ctx.lineTo(x + 60, y + 10);
             ctx.lineTo(x + 50, y + 30);
             ctx.lineTo(x + 45, y + 50); 
             ctx.closePath();
-            ctx.clip(); // Taglia tutto ciò che esce da questa forma
+            ctx.clip(); 
 
-            // Strisce Verticali (Colori corretti e larghi per coprire l'area)
+            // Strisce Verticali
             ctx.fillStyle = '#002B7F'; ctx.fillRect(x, y, 28, 60); // Blu
             ctx.fillStyle = '#FCD116'; ctx.fillRect(x + 28, y, 16, 60); // Giallo
             ctx.fillStyle = '#CE1126'; ctx.fillRect(x + 44, y, 30, 60); // Rosso
@@ -340,23 +383,22 @@
             ctx.stroke();
 
             // 4. LA RAGAZZA (Sull'aereo - Grande e Visibile)
-            // Viso
-            ctx.fillStyle = '#ffcc99'; 
+            ctx.fillStyle = '#ffcc99'; // Viso
             ctx.fillRect(x + 145, y - 5, 20, 20);
-            // Capelli lunghi (Castani)
-            ctx.fillStyle = '#3e2723'; 
-            ctx.fillRect(x + 142, y - 8, 26, 6); // Sopra
-            ctx.fillRect(x + 142, y - 8, 6, 35); // Lato sx lungo
-            ctx.fillRect(x + 162, y - 8, 6, 35); // Lato dx lungo
-            // Occhi (Grandi)
-            ctx.fillStyle = 'black'; 
+            
+            ctx.fillStyle = '#3e2723'; // Capelli
+            ctx.fillRect(x + 142, y - 8, 26, 6); 
+            ctx.fillRect(x + 142, y - 8, 6, 35); 
+            ctx.fillRect(x + 162, y - 8, 6, 35); 
+            
+            ctx.fillStyle = 'black'; // Occhi
             ctx.fillRect(x + 149, y + 2, 4, 4);
             ctx.fillRect(x + 157, y + 2, 4, 4);
-            // Sorriso
-            ctx.fillStyle = '#e57373';
+            
+            ctx.fillStyle = '#e57373'; // Sorriso
             ctx.fillRect(x + 151, y + 10, 8, 2);
 
-            // 5. Cabina (Vetro Semitrasparente - Sopra la ragazza)
+            // 5. Cabina (Vetro Semitrasparente)
             ctx.fillStyle = 'rgba(129, 212, 250, 0.4)'; 
             ctx.strokeStyle = 'white';
             ctx.lineWidth = 1;
@@ -381,12 +423,12 @@
 
     function drawBoyfriendBase(ctx, x, y, skin) {
         const skinColor = '#ffcc99'; const shirtColor = '#3498db'; const pantsColor = '#2c3e50';
-        ctx.fillStyle = skinColor; ctx.fillRect(x+10, y+4, 24, 24);
-        ctx.fillStyle = '#3e2723'; ctx.fillRect(x+8, y, 28, 8); ctx.fillRect(x+8, y, 8, 20); ctx.fillRect(x+32, y, 4, 16);
-        ctx.fillStyle = 'black'; ctx.fillRect(x+22, y+12, 4, 4);
-        ctx.fillStyle = shirtColor; ctx.fillRect(x+12, y+28, 20, 16); 
-        ctx.fillStyle = skinColor; ctx.fillRect(x+8, y+28, 4, 12); ctx.fillRect(x+32, y+28, 4, 12);
-        ctx.fillStyle = pantsColor; ctx.fillRect(x+12, y+44, 8, 8); ctx.fillRect(x+24, y+44, 8, 8);
+        ctx.fillStyle = skinColor; ctx.fillRect(x+10, y+4, 24, 24); // Testa
+        ctx.fillStyle = '#3e2723'; ctx.fillRect(x+8, y, 28, 8); ctx.fillRect(x+8, y, 8, 20); ctx.fillRect(x+32, y, 4, 16); // Capelli
+        ctx.fillStyle = 'black'; ctx.fillRect(x+22, y+12, 4, 4); // Occhio
+        ctx.fillStyle = shirtColor; ctx.fillRect(x+12, y+28, 20, 16); // Corpo
+        ctx.fillStyle = skinColor; ctx.fillRect(x+8, y+28, 4, 12); ctx.fillRect(x+32, y+28, 4, 12); // Braccia
+        ctx.fillStyle = pantsColor; ctx.fillRect(x+12, y+44, 8, 8); ctx.fillRect(x+24, y+44, 8, 8); // Gambe
         drawAccessories(ctx, x, y, skin);
     }
 
@@ -516,7 +558,7 @@
             // 1. Applica Gravità
             this.vy += GRAVITY;
 
-            // 2. Controllo spigoli/precipizi (Smart AI)
+            // 2. AI: Non cadere
             if (this.grounded) {
                 let lookAheadX = this.x + (this.vx > 0 ? this.w + 5 : -5);
                 let hasGround = false;
